@@ -1,3 +1,6 @@
+import torch
+torch.set_num_threads(1) 
+
 import streamlit as st
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
@@ -127,5 +130,6 @@ if api_key:
             st.write("Assistant:", response['answer'])
 else:
     st.warning("Please enter the Groq API key")
+
 
 
