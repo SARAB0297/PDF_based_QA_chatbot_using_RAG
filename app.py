@@ -22,8 +22,10 @@ HF_TOKEN = st.secrets.get("HF_TOKEN", os.getenv("HF_TOKEN"))
 if HF_TOKEN:
     os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 # Initialize embeddings
-embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
-
+embeddings = HuggingFaceEmbeddings(
+    model_name="sentence-transformers/all-MiniLM-L6-v2",
+    model_kwargs={"device": "cpu"}
+    )
 # Title
 st.title("Conversational RAG with PDF Uploads and Chat History")
 st.write("Upload PDF's and ask query from its content")
@@ -125,4 +127,5 @@ if api_key:
             st.write("Assistant:", response['answer'])
 else:
     st.warning("Please enter the Groq API key")
+
 
