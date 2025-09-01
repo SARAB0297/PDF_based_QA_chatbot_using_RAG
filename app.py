@@ -15,8 +15,12 @@ from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
-os.environ['HF_TOKEN'] = os.getenv("HF_TOKEN")
+# Prefer Streamlit Secrets in the cloud, fall back to local env if present
+HF_TOKEN = st.secrets.get("HF_TOKEN", os.getenv("HF_TOKEN"))
 
+# Hugging Face libraries look for this name:
+if HF_TOKEN:
+    os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
 # Initialize embeddings
 embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
 
@@ -121,3 +125,4 @@ if api_key:
             st.write("Assistant:", response['answer'])
 else:
     st.warning("Please enter the Groq API key")
+
