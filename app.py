@@ -1,9 +1,8 @@
-import torch
-torch.set_num_threads(1) 
 
 import streamlit as st
 from langchain.chains import create_history_aware_retriever, create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_chroma import Chroma
 from langchain_community.chat_message_histories import ChatMessageHistory
 from langchain_core.chat_history import BaseChatMessageHistory
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -12,124 +11,143 @@ from langchain_core.runnables.history import RunnableWithMessageHistory
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
-from langchain_community.vectorstores import FAISS   # ✅ FAISS instead of Chroma
 import os
+
 from dotenv import load_dotenv
-
-# Load environment variables
 load_dotenv()
-# Prefer Streamlit Secrets in the cloud, fall back to local env if present
-HF_TOKEN = st.secrets.get("HF_TOKEN", os.getenv("HF_TOKEN"))
 
-# Hugging Face libraries look for this name:
-if HF_TOKEN:
-    os.environ["HUGGINGFACEHUB_API_TOKEN"] = HF_TOKEN
-# Initialize embeddings
-embeddings = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    model_kwargs={"device": "cpu"}
-    )
-# Title
+os.environ['HF_TOKEN']=os.getenv("HF_TOKEN")
+embeddings=HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+
+##title setup
 st.title("Conversational RAG with PDF Uploads and Chat History")
 st.write("Upload PDF's and ask query from its content")
 
-# Import GROQ API Key
-api_key = st.text_input("Enter your Groq API Key:", type="password")
+#import GROQ API Key
+api_key=st.text_input("Enter your Groq API Key:",type="password")
 
-# Check GROQ API Key
+#check GROQ API Key
 if api_key:
-    llm = ChatGroq(groq_api_key=api_key, model_name="Gemma2-9b-It")
+    llm=ChatGroq(groq_api_key=api_key, model_name="Gemma2-9b-It")
 
-    # Chat interface
-    session_id = st.text_input("Session_ID", value="default_session")
+    #chat interface
+    session_id=st.text_input("Session_ID",value="default_session")
 
-    # Manage chat history with states
+    #manage chat history with states
+
     if 'store' not in st.session_state:
-        st.session_state.store = {}
+        st.session_state.store= {}
 
-    uploaded_files = st.file_uploader("Choose one or multiple PDF files to upload", type="pdf", accept_multiple_files=True)
+    uploaded_files=st.file_uploader("Choose one or multiple PDF files to upload", type="pdf",accept_multiple_files=True)
 
-    # Process uploaded PDFs
+    #process upload PDFs
     if uploaded_files:
-        documents = []
+        documents=[]
         for uploaded_file in uploaded_files:
-            temppdf = "./temp.pdf"
-            with open(temppdf, "wb") as file:
-                file.write(uploaded_file.getvalue())
-
-            loader = PyPDFLoader(temppdf)
-            docs = loader.load()
+            temppdf=f"./temp.pdf"
+            with open(temppdf,"wb")as file:
+                file.write( uploaded_file.getvalue())
+                file_name=uploaded_file.name
+            
+            loader=PyPDFLoader(temppdf)
+            docs=loader.load()
             documents.extend(docs)
+#splitting and creating embeddings
+        text_splitter=RecursiveCharacterTextSplitter(chunk_size=5000,chunk_overlap=500)
+        splits=text_splitter.split_documents(documents)
+        vectorstore=Chroma.from_documents(documents=splits,embedding=embeddings)
+        retriever=vectorstore.as_retriever()
 
-        # Split and create embeddings
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=500)
-        splits = text_splitter.split_documents(documents)
+        TOP_K = 5  # small, interview-friendly number
+        show_diag = st.checkbox("Show retrieval quality", value=False)
+        conf= None
+        pairs=[]
+        def retrieve_with_scores(query: str, k: int = TOP_K):   
+    # Chroma returns (Document, relevance_score) with score in [0,1], higher = better
+            return vectorstore.similarity_search_with_relevance_scores(query, k=k)
 
-        #  FAISS vector store (instead of Chroma)
-        vectorstore = FAISS.from_documents(documents=splits, embedding=embeddings)
-        retriever = vectorstore.as_retriever()
+        def retrieval_confidence(pairs, faiss_mode=False):
+    # simple, explainable metric = best relevance score
+            if not pairs:
+                return 0.0
+            scores = [s for _, s in pairs]
+            if faiss_mode:
+        # convert distance → similarity in [0,1]
+                sims = [1 - s for s in scores]
+                return max(sims)
+            else:
+                return max(scores)
 
-        # Contextualization prompt
-        contextualize_q_system_prompt = (
-            "Given a chat history and the latest user question "
-            "which might reference context in chat history, "
-            "formulate a standalone question which can be understood "
-            "without the chat history. DO NOT answer the question, "
+
+
+        contextualize_q_system_prompt=(
+               "Given a chat history and the latest user question"
+            "which might reference context in chat history"
+            "formulate a standalone question which can be understood"
+            "without the chat history. DO NOT answer the question,"
             "just reformulate it if needed and else return as it is."
         )
 
-        contextualize_q_prompt = ChatPromptTemplate.from_messages(
+        contextualize_q_prompt=ChatPromptTemplate.from_messages(
             [
-                ("system", contextualize_q_system_prompt),
+                ("system",contextualize_q_system_prompt),
                 MessagesPlaceholder("chat_history"),
-                ("human", "{input}")
+                ("human","{input}")
             ]
         )
-        history_aware_retriever = create_history_aware_retriever(llm, retriever, contextualize_q_prompt)
+        history_aware_retriever=create_history_aware_retriever(llm,retriever,contextualize_q_prompt)
 
-        # Answer Question
-        system_prompt = (
-            "You are an assistant for question answering tasks. "
-            "Use the following pieces of retrieved context to answer the question. "
-            "If you don't know the answer, say that you don't know. "
-            "Use three sentences maximum and keep the answers concise."
-            "\n\n{context}"
-        )
-
-        qa_prompt = ChatPromptTemplate.from_messages(
+        #Answer Question
+        system_prompt=(
+                "You are an assistant for question answering tasks."
+                "Use the following pieces of retrieved context to answer the question."
+                " If you don't know the answer, say that you don't know."
+                "Use three sentences maximum and keep the answers concise."
+                "\n\n"
+                "{context}"
+            )
+        qa_prompt=ChatPromptTemplate.from_messages(
             [
-                ("system", system_prompt),
+                ("system",system_prompt),
                 MessagesPlaceholder("chat_history"),
-                ("human", "{input}")
+                ("human","{input}")
             ]
         )
-        question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
-        rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
+        question_answer_chain=create_stuff_documents_chain(llm,qa_prompt)
+        rag_chain=create_retrieval_chain(history_aware_retriever,question_answer_chain)
 
-        # Manage chat history per session
-        def get_session_history(session: str) -> BaseChatMessageHistory:
+        def get_session_history(session:str)->BaseChatMessageHistory:
             if session_id not in st.session_state.store:
-                st.session_state.store[session_id] = ChatMessageHistory()
+                st.session_state.store[session_id]=ChatMessageHistory()
             return st.session_state.store[session_id]
-
-        conversational_rag_chain = RunnableWithMessageHistory(
-            rag_chain, get_session_history,
+    
+        conversational_rag_chain=RunnableWithMessageHistory(
+            rag_chain,get_session_history,
             input_messages_key="input",
             history_messages_key="chat_history",
             output_messages_key="answer"
-        )
 
-        # User input
-        user_input = st.text_input("Your questions:")
+        )
+        user_input=st.text_input("Your questions:")
         if user_input:
+    # 1) Diagnose retrieval quality for THIS query (scores come from Chroma)
+            pairs = retrieve_with_scores(user_input, k=TOP_K)
+            conf = retrieval_confidence(pairs)
+
+    # 2) Run your existing conversational RAG chain (no change)
             session_history = get_session_history(session_id)
             response = conversational_rag_chain.invoke(
                 {"input": user_input},
-                config={"configurable": {"session_id": session_id}}
+                config={"configurable": {"session_id": session_id}},
             )
-            st.write("Assistant:", response['answer'])
-else:
-    st.warning("Please enter the Groq API key")
+            st.write("Assistant:", response["answer"])
 
+    # 3) (Optional) Show top-k with scores on demand
+        if show_diag:
+            st.caption(f"Retrieval confidence: {conf:.2f} (max relevance score in top-{TOP_K})")
+            rows = []
+            for rank, (doc, score) in enumerate(pairs, 1):
+                rows.append(f"{rank}. score={score:.2f} · source={doc.metadata.get('source','')} · page={doc.metadata.get('page','')}")
+            st.text("\n".join(rows))
 
-
+           
