@@ -21,4 +21,5 @@ langserve
 langchain_community
 langchain_groq
 
+pysqlite3-binary
 
