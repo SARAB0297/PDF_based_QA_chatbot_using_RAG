@@ -22,9 +22,3 @@ langchain_community
 langchain_groq
 
 
-faiss-cpu
-pypdf
-
-torch==2.2.2
-sentence-transformers==2.7.0
-transformers<5
