@@ -26,7 +26,7 @@ st.write("Upload PDF's and ask query from its content")
 #import GROQ API Key
 api_key=st.text_input("Enter your Groq API Key:",type="password")
 
-#check GROQ API Key
+#checking imported Key
 if api_key:
     llm=ChatGroq(groq_api_key=api_key, model_name="Gemma2-9b-It")
 
@@ -52,13 +52,13 @@ if api_key:
             loader=PyPDFLoader(temppdf)
             docs=loader.load()
             documents.extend(docs)
-#splitting and creating embeddings
+        #chunking
         text_splitter=RecursiveCharacterTextSplitter(chunk_size=5000,chunk_overlap=500)
         splits=text_splitter.split_documents(documents)
         vectorstore=Chroma.from_documents(documents=splits,embedding=embeddings)
         retriever=vectorstore.as_retriever()
 
-        TOP_K = 5  # small, interview-friendly number
+        TOP_K = 5  
         show_diag = st.checkbox("Show retrieval quality", value=False)
         conf= None
         pairs=[]
@@ -142,7 +142,7 @@ if api_key:
             )
             st.write("Assistant:", response["answer"])
 
-    # 3) (Optional) Show top-k with scores on demand
+    #3) Show top-k with scores on demand
         if show_diag:
             st.caption(f"Retrieval confidence: {conf:.2f} (max relevance score in top-{TOP_K})")
             rows = []
@@ -151,3 +151,4 @@ if api_key:
             st.text("\n".join(rows))
 
            
+
